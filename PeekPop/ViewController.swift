@@ -14,10 +14,8 @@ class ViewController: UIViewController {
     
     var messages = [String]()
     let count = 20
-    let reactionHeight: CGFloat = 40.0
-    let spaceReactionHeight: CGFloat = 10.0
-    let menuHeight: CGFloat = 200
-    var targetedView: UITargetedPreview?
+    
+    private let targetedPreview = ContextMenuView()
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -40,13 +38,6 @@ class ViewController: UIViewController {
         return String((0..<length).map{ _ in letters.randomElement()! })
     }
     
-    @available(iOS 13.0, *)
-    func createContextMenu() -> UIMenu {
-        let share = UIAction(title: "Share", image: UIImage(systemName: "square.and.arrow.up")) {_ in }
-        let rename = UIAction(title: "Mark as read", image: UIImage(systemName: "square.and.pencil")) { _ in }
-        let delete = UIAction(title: "Delete", image: UIImage(systemName: "trash"), attributes: .destructive) {_ in }
-        return UIMenu(title: "", children: [share, rename, delete])
-    }
 }
 
 extension ViewController: UITableViewDelegate, UITableViewDataSource {
@@ -67,37 +58,88 @@ extension ViewController: UITableViewDelegate, UITableViewDataSource {
     @available(iOS 13.0, *)
     func tableView(_ tableView: UITableView, contextMenuConfigurationForRowAt indexPath: IndexPath, point: CGPoint) -> UIContextMenuConfiguration? {
         let identifier = NSString(string: "\(indexPath.row)")
-        return UIContextMenuConfiguration(identifier: identifier, previewProvider: nil) { [weak self] _ in
-            guard let self = self else { return UIMenu() }
-            return self.createContextMenu()
-        }
+        return targetedPreview.getContectMenuConfiguration(for: identifier)
     }
     
     @available(iOS 13.0, *)
     func tableView(_ tableView: UITableView, previewForHighlightingContextMenuWithConfiguration configuration: UIContextMenuConfiguration) -> UITargetedPreview? {
-        let preview = makeTargetedPreview(for: configuration)
-        self.targetedView = preview
-        preview?.view.isHidden = true
-        return preview
+        
+        let previewView = targetedPreview.updateTargetedPreview(for: self, frame: .zero,tableView: tableView, for: configuration)
+        targetedPreview.hide()
+        return previewView
     }
 
 
     func tableView(_ tableView: UITableView, willDisplayContextMenu configuration: UIContextMenuConfiguration, animator: (any UIContextMenuInteractionAnimating)?) {
-        self.targetedView?.view.isHidden = false
+        self.targetedPreview.show()
     }
 
     @available(iOS 13.0, *)
     func tableView(_ tableView: UITableView, previewForDismissingContextMenuWithConfiguration configuration: UIContextMenuConfiguration) -> UITargetedPreview? {
-        makeTargetedDismissPreview(for: configuration)
+        targetedPreview.makeTargetedDismissPreview(tableView: tableView, for: configuration)
     }
     
     @available(iOS 13.0, *)
     func tableView(_ tableView: UITableView, willPerformPreviewActionForMenuWith configuration: UIContextMenuConfiguration, animator: UIContextMenuInteractionCommitAnimating) {
         animator.preferredCommitStyle = .pop
     }
+}
 
-    @available(iOS 13.0, *)
-    func makeTargetedPreview(for configuration: UIContextMenuConfiguration) -> UITargetedPreview? {
+final class ContextMenuView: UIView {
+    
+    // MARK: - Constants
+    
+    private let reactionHeight: CGFloat = 40.0
+    private let spaceReactionHeight: CGFloat = 5.0
+    private let menuHeight: CGFloat = 200
+    
+    // MARK: - Preview
+    
+    private var targetedView: UITargetedPreview?
+    private var contextMenu: UIMenu?
+    
+    // MARK: - Control functions
+
+    func show() {
+        targetedView?.view.isHidden = false
+    }
+    
+    func hide() {
+        targetedView?.view.isHidden = true
+    }
+    
+    // MARK: - Initialization
+    
+    init() {
+        super.init(frame: .zero)
+        contextMenu = makeSystemContextMenu()
+    }
+    
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+    
+    // MARK: - UI Functions
+    
+    func getContectMenuConfiguration(for identifier: NSString) -> UIContextMenuConfiguration {
+        return UIContextMenuConfiguration(identifier: identifier, previewProvider: nil) { [weak self] _ in
+            return self?.contextMenu
+        }
+    }
+    
+    private func makeSystemContextMenu() -> UIMenu {
+        let share = UIAction(title: "Share", image: UIImage(systemName: "square.and.arrow.up")) {_ in }
+        let rename = UIAction(title: "Mark as read", image: UIImage(systemName: "square.and.pencil")) { _ in }
+        let delete = UIAction(title: "Delete", image: UIImage(systemName: "trash"), attributes: .destructive) {_ in }
+        return UIMenu(title: "", children: [share, rename, delete])
+    }
+    
+    func updateTargetedPreview(
+        for controller: UIViewController,
+        frame: CGRect,
+        tableView: UITableView,
+        for configuration: UIContextMenuConfiguration
+    ) -> UITargetedPreview? {
         guard let identifier = configuration.identifier as? String else { return nil }
         guard let row = Int(identifier) else { return nil }
         guard let cell = tableView.cellForRow(at: .init(row: row, section: 0)) as? MessageCell else { return nil }
@@ -110,7 +152,7 @@ extension ViewController: UITableViewDelegate, UITableViewDataSource {
         reactionView.onReaction = { [weak self] reactionType in
             guard let self = self else { return }
             print(reactionType)
-            self.dismiss(animated: true)
+            controller.dismiss(animated: true)
         }
         reactionView.layer.cornerRadius = 10
         reactionView.layer.masksToBounds = true
@@ -136,23 +178,32 @@ extension ViewController: UITableViewDelegate, UITableViewDataSource {
         reactionView.topAnchor.constraint(equalTo: container.topAnchor).isActive = true
         reactionView.widthAnchor.constraint(equalToConstant: 50*4).isActive = true
         reactionView.heightAnchor.constraint(equalToConstant: reactionHeight).isActive = true
-
-        let centerPoint = CGPoint(
-            x: cell.center.x,
-            y: tableView.bounds.height
-        )
+        
+        let centerPoint = getCenterPointForTargetedView(cell, additionalHeight: container.frame.height)
         let previewTarget = UIPreviewTarget(container: tableView, center: centerPoint)
         let parameters = UIPreviewParameters()
         parameters.backgroundColor = .clear
         if #available(iOS 14.0, *) {
             parameters.shadowPath = UIBezierPath()
         }
-
-        return UITargetedPreview(view: container, parameters: parameters, target: previewTarget)
+        let targetedPreview = UITargetedPreview(view: container, parameters: parameters, target: previewTarget)
+        self.targetedView = targetedPreview
+        return targetedPreview
     }
-
-    @available(iOS 13.0, *)
-    func makeTargetedDismissPreview(for configuration: UIContextMenuConfiguration) -> UITargetedPreview? {
+    
+    private func getCenterPointForTargetedView(_ cell: MessageCell, additionalHeight: CGFloat) -> CGPoint {
+        let locationOnScreen = cell.convert(cell.bounds, to: UIApplication.shared.keyWindow)
+        let fullHeight = cell.frame.height + additionalHeight + spaceReactionHeight + reactionHeight + menuHeight
+        
+        if locationOnScreen.origin.y + fullHeight > (UIApplication.shared.keyWindow?.frame.height)! {
+            let leftHeight = (locationOnScreen.origin.y + fullHeight) - (UIApplication.shared.keyWindow?.frame.height)!
+            return .init(x: cell.center.x, y: cell.center.y - leftHeight)
+        } else {
+            return .init(x: cell.center.x, y: cell.center.y)
+        }
+    }
+    
+    func makeTargetedDismissPreview(tableView: UITableView,for configuration: UIContextMenuConfiguration) -> UITargetedPreview? {
         guard let identifier = configuration.identifier as? String else { return nil }
         guard let row = Int(identifier) else { return nil }
         guard let cell = tableView.cellForRow(at: .init(row: row, section: 0)) as? MessageCell else { return nil }
@@ -173,6 +224,4 @@ extension ViewController: UITableViewDelegate, UITableViewDataSource {
         }
         return UITargetedPreview(view: snapshot, parameters: parameters, target: previewTarget)
     }
-    
 }
-
