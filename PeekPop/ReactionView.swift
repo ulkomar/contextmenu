@@ -23,7 +23,7 @@ class ReactionView: UIView {
     override init(frame: CGRect) {
         super.init(frame: frame)
         initViewWithNib()
-        doAnimation()
+//        doAnimation()
     }
     
     required init?(coder: NSCoder) {
